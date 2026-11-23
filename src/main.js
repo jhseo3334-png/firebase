@@ -1,4 +1,6 @@
-﻿'use strict';
+import { initializeFirebase, observeUser, googleSignIn, submitActivity } from './firebase.js';
+
+'use strict';
 
 // 프롬프트와 모델은 이후 수업 목적에 맞게 조정할 수 있습니다.
 const MODEL = 'gpt-5.4-mini';
@@ -10,6 +12,42 @@ let apiKey = '';
 let turns = 0;
 let busy = false;
 const history = [];
+const INITIAL_MESSAGE = '안녕! 오늘 학교에서 보낸 하루는 어땠어? 기억에 남는 일이 있다면 편하게 이야기해 줘.';
+let services, signedInUser = null, activityUser = null;
+let firstMessageAt = null, chatFinishedAt = null, submission = null;
+let submitted = false;
+const activityId = crypto.randomUUID();
+try {
+  services = initializeFirebase();
+  observeUser(services.auth, user => {
+    signedInUser = user;
+    $('user-info').textContent = user ? `${user.displayName || '이름 없음'} · ${user.email || '이메일 없음'}` : '로그인이 필요해요';
+    if (activityUser && user?.uid !== activityUser.uid) {
+      $('login-section').hidden = false;
+      $('key-section').hidden = true; $('chat-section').hidden = true; $('draw-section').hidden = true;
+      $('login-error').textContent = '활동을 시작한 계정으로 다시 로그인해 주세요.';
+    } else if (user) {
+      $('login-section').hidden = true;
+      if (chatFinishedAt) $('draw-section').hidden = false;
+      else if (apiKey) $('chat-section').hidden = false;
+      else $('key-section').hidden = false;
+      $('login-error').textContent = '';
+    } else {
+      $('login-section').hidden = false; $('key-section').hidden = true;
+      $('chat-section').hidden = true; $('draw-section').hidden = true;
+    }
+    $('login-button').disabled = false;
+  });
+  $('login-button').addEventListener('click', async () => {
+    $('login-button').disabled = true; $('login-error').textContent = '';
+    try { await googleSignIn(services.auth); }
+    catch (error) { $('login-error').textContent = 'Google 로그인에 실패했어요. 팝업 허용과 Firebase 인증 설정을 확인해 주세요.'; }
+    finally { $('login-button').disabled = false; }
+  });
+} catch (error) {
+  $('user-info').textContent = 'Firebase 설정 필요';
+  $('login-error').textContent = error.message;
+}
 
 async function requestResponse(key, input, instructions) {
   const response = await fetch('https://api.openai.com/v1/responses', {
@@ -64,6 +102,9 @@ $('chat-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const input = $('chat-input'); const message = input.value.trim();
   if (!message || busy || turns >= MAX_TURNS) return;
+  if (!signedInUser || (activityUser && signedInUser.uid !== activityUser.uid)) return;
+  if (!activityUser) activityUser = { uid: signedInUser.uid, displayName: signedInUser.displayName, email: signedInUser.email };
+  if (firstMessageAt === null) firstMessageAt = Date.now();
   busy = true; updateChat(); $('chat-error').textContent = ''; $('chat-status').textContent = '마음 친구가 답장을 생각하고 있어요...';
   try {
     const reply = await requestResponse(apiKey, [...history, { role: 'user', content: message }], SYSTEM_PROMPT);
@@ -74,6 +115,7 @@ $('chat-form').addEventListener('submit', async (event) => {
 });
 $('finish-button').addEventListener('click', () => {
   if (busy || turns < MIN_TURNS) return;
+  chatFinishedAt = Date.now();
   $('chat-section').hidden = true; $('draw-section').hidden = false;
   $('step-chat').className = 'done'; $('step-draw').className = 'current'; $('draw-title').focus();
 });
@@ -95,7 +137,7 @@ function drawLine(from, to) {
   ctx.globalAlpha = 1;
 }
 canvas.addEventListener('pointerdown', event => {
-  if (drawing || (event.pointerType === 'mouse' && event.button !== 0)) return;
+  if (busy || submitted || drawing || (event.pointerType === 'mouse' && event.button !== 0)) return;
   event.preventDefault(); drawing = true; pointerId = event.pointerId; canvas.setPointerCapture(pointerId); lastPoint = point(event); drawLine(lastPoint, lastPoint);
 });
 canvas.addEventListener('pointermove', event => { if (!drawing || event.pointerId !== pointerId) return; const next = point(event); drawLine(lastPoint, next); lastPoint = next; });
@@ -107,5 +149,26 @@ $('palette').addEventListener('click', event => {
   document.querySelectorAll('.swatch').forEach(swatch => { const active = swatch === button; swatch.classList.toggle('selected', active); swatch.setAttribute('aria-pressed', String(active)); });
 });
 for (const id of ['brightness', 'opacity', 'size']) $(id).addEventListener('input', () => { $(`${id}-value`).textContent = $(id).value + (id === 'size' ? 'px' : '%'); });
-$('clear-button').addEventListener('click', () => { if (confirm('그림을 모두 지울까요?')) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); } });
-$('submit-button').addEventListener('click', () => { $('submit-status').textContent = '아직 제출 기능이 연결되지 않았어요. 그림은 이 화면에만 남아 있어요.'; });
+$('clear-button').addEventListener('click', () => { if (busy || submitted) return; if (confirm('그림을 모두 지울까요?')) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); } });
+$('submit-button').addEventListener('click', async () => {
+  if (submitted || busy || !chatFinishedAt || !signedInUser || signedInUser.uid !== activityUser?.uid) return;
+  busy = true; $('submit-button').disabled = true; $('submit-status').textContent = '저장하고 있어요...';
+  try {
+    const submittedAt = Date.now();
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('그림을 PNG로 변환하지 못했어요.');
+    await submitActivity(services, activityUser, activityId, blob, {
+      conversation: [{ role: 'assistant', content: INITIAL_MESSAGE }, ...history],
+      chatDurationMs: chatFinishedAt - firstMessageAt,
+      drawingDurationMs: submittedAt - chatFinishedAt,
+      firstMessageAt: new Date(firstMessageAt).toISOString(),
+      chatFinishedAt: new Date(chatFinishedAt).toISOString(),
+      submittedAt: new Date(submittedAt).toISOString(),
+      turnCount: turns
+    });
+    submitted = true; $('submit-status').textContent = '제출이 완료되었어요. 오늘의 마음을 나눠줘서 고마워요.';
+    $('submit-button').textContent = '제출 완료';
+  } catch (error) {
+    $('submit-status').textContent = `제출하지 못했어요. Firebase 설정과 네트워크를 확인하고 다시 시도해 주세요. (${error.code || error.message})`;
+  } finally { busy = false; $('submit-button').disabled = submitted; }
+});
