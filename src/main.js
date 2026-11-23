@@ -14,7 +14,7 @@ let busy = false;
 const history = [];
 const INITIAL_MESSAGE = '안녕! 오늘 학교에서 보낸 하루는 어땠어? 기억에 남는 일이 있다면 편하게 이야기해 줘.';
 let services, signedInUser = null, activityUser = null;
-let firstMessageAt = null, chatFinishedAt = null, submission = null;
+let firstMessageAt = null, chatFinishedAt = null;
 let submitted = false;
 const activityId = crypto.randomUUID();
 try {
@@ -69,12 +69,13 @@ async function requestResponse(key, input, instructions) {
 $('key-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const candidate = $('api-key').value.trim();
-  if (!candidate || busy) return;
+  if (!candidate || busy || !signedInUser) return;
   busy = true;
   const button = event.currentTarget.querySelector('button');
   button.disabled = true; button.textContent = '확인 중...'; $('key-error').textContent = '';
   try {
     await requestResponse(candidate, '안녕', '한국어로 짧게 인사해.');
+    if (!signedInUser) throw new Error('Google 계정에 다시 로그인해 주세요.');
     apiKey = candidate; $('api-key').value = '';
     $('key-section').hidden = true; $('chat-section').hidden = false;
     $('step-key').className = 'done'; $('step-chat').className = 'current'; $('chat-input').focus();
