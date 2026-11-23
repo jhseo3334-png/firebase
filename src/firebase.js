@@ -14,6 +14,17 @@ export function initializeFirebase() {
 export function observeUser(auth, callback) { return onAuthStateChanged(auth, callback); }
 export async function googleSignIn(auth) { return signInWithPopup(auth, new GoogleAuthProvider()); }
 export async function googleSignOut(auth) { return signOut(auth); }
+export function loginErrorMessage(error) {
+  switch (error.code) {
+    case 'auth/popup-blocked': return '로그인 팝업이 차단되었어요. 브라우저에서 이 사이트의 팝업을 허용해 주세요.';
+    case 'auth/popup-closed-by-user': return '로그인 창이 닫혔어요. 다시 시도해 주세요.';
+    case 'auth/unauthorized-domain': return '현재 주소가 Firebase 승인된 도메인에 없어요. Authentication 설정에서 이 도메인을 추가해 주세요.';
+    case 'auth/operation-not-allowed': return 'Firebase Authentication에서 Google 로그인 제공업체를 활성화해 주세요.';
+    case 'auth/network-request-failed': return 'Google에 연결하지 못했어요. 네트워크 연결을 확인해 주세요.';
+    case 'auth/cancelled-popup-request': return '다른 로그인 창이 열려 있어요. 열려 있는 창을 확인해 주세요.';
+    default: return `로그인하지 못했어요. Firebase 설정과 브라우저 팝업을 확인해 주세요. (${error.code || '알 수 없는 오류'})`;
+  }
+}
 export async function submitActivity(services, user, activityId, blob, activity) {
   if (services.auth.currentUser?.uid !== user.uid) throw new Error('로그인 계정이 변경되었어요. 다시 로그인해 주세요.');
   const path = `students/${user.uid}/drawings/${activityId}.png`;

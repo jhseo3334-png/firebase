@@ -1,4 +1,4 @@
-import { initializeFirebase, observeUser, googleSignIn, submitActivity } from './firebase.js';
+import { initializeFirebase, observeUser, googleSignIn, submitActivity, loginErrorMessage } from './firebase.js';
 
 'use strict';
 
@@ -41,7 +41,7 @@ try {
   $('login-button').addEventListener('click', async () => {
     $('login-button').disabled = true; $('login-error').textContent = '';
     try { await googleSignIn(services.auth); }
-    catch (error) { $('login-error').textContent = 'Google 로그인에 실패했어요. 팝업 허용과 Firebase 인증 설정을 확인해 주세요.'; }
+    catch (error) { $('login-error').textContent = loginErrorMessage(error); }
     finally { $('login-button').disabled = false; }
   });
 } catch (error) {

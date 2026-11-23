@@ -7,3 +7,4 @@
 .hero-actions button { border: 0; cursor: pointer; font-family: inherit; }
 .hero-actions button:disabled { opacity: .6; cursor: wait; }
 @media(max-width: 600px) { .home-account { font-size: .72rem; max-width: 60%; } }
+#teacher-link[hidden] { display: none; }
