@@ -9,5 +9,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
+  },
+  "devDependencies": {
+    "firebase-admin": "^14.5.1"
   }
 }

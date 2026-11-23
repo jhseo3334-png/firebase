@@ -32,7 +32,7 @@ function renderDates() {
   for (const day of dates) {
     const label = document.createElement('label'); label.className = 'date-option';
     const input = document.createElement('input'); input.type = 'checkbox'; input.checked = selectedDates.has(day);
-    input.addEventListener('change', () => { if (input.checked) selectedDates.add(day); else selectedDates.delete(day); renderRecords(); });
+    input.addEventListener('change', () => { if (input.checked) selectedDates.add(day); else selectedDates.delete(day); if (selected && !selectedDates.has(dateKey(selected.date))) resetDetails(); renderRecords(); });
     const span = document.createElement('span'); span.textContent = day; label.append(input, span); container.append(label);
   }
 }
@@ -42,14 +42,23 @@ function renderRecords() {
   $('record-count').textContent = `${list.length}개`;
   if (!list.length) { container.append(message(selectedDates.size ? '선택한 날짜에 기록이 없어요.' : '날짜를 선택해 주세요.', 'muted')); return; }
   for (const item of list) {
+    const row = document.createElement('div'); row.className = 'record-row';
     const button = document.createElement('button'); button.type = 'button'; button.className = 'record-button';
     if (selected?.ref.path === item.ref.path) button.classList.add('active');
     const title = document.createElement('strong'); title.textContent = item.data.name || '이름 없음';
     const time = document.createElement('span'); time.textContent = item.date ? `(${dateKey(item.date)}, ${timeFormat.format(item.date)})` : '(날짜 미상)';
-    button.append(title, time); button.addEventListener('click', () => showRecord(item)); container.append(button);
+    button.append(title, time); button.addEventListener('click', () => showRecord(item));
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'record-delete'; remove.textContent = '삭제';
+    remove.setAttribute('aria-label', `${item.data.name || '학생'} ${item.date ? `${dateKey(item.date)} ${timeFormat.format(item.date)}` : '날짜 미상'} 기록 삭제`);
+    remove.addEventListener('click', () => deleteRecord(item)); row.append(button, remove); container.append(row);
   }
 }
 function duration(ms) { if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return '정보 없음'; const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}분 ${s % 60}초`; }
+function safeDrawingPath(item) {
+  const parts = item.ref.path.split('/');
+  const expected = `students/${parts[1]}/drawings/${parts[3]}.png`;
+  return item.data.drawingPath === expected ? expected : null;
+}
 async function showRecord(item) {
   selected = item; const id = ++requestId; clearImage(); renderRecords(); status('');
   $('detail-title').textContent = item.data.name || '이름 없음';
@@ -65,9 +74,9 @@ async function showRecord(item) {
   } else conversation.append(message('저장된 대화가 없어요.', 'empty'));
   $('durations').textContent = `대화 시간 ${duration(item.data.chatDurationMs)}  ·  그림 그린 시간 ${duration(item.data.drawingDurationMs)}`;
   $('image-container').replaceChildren(message('그림을 불러오는 중이에요.', 'empty'));
-  if (!item.data.drawingPath) { $('image-container').replaceChildren(message('저장된 그림이 없어요.', 'empty')); return; }
+  if (!safeDrawingPath(item)) { $('image-container').replaceChildren(message('그림 경로가 없거나 올바르지 않아요.', 'empty')); return; }
   try {
-    const blob = await getBlob(ref(services.storage, item.data.drawingPath), 10 * 1024 * 1024);
+    const blob = await getBlob(ref(services.storage, safeDrawingPath(item)), 10 * 1024 * 1024);
     if (id !== requestId) return;
     imageUrl = URL.createObjectURL(blob); const img = document.createElement('img'); img.src = imageUrl; img.alt = `${item.data.name || '학생'}의 하루 그림`;
     $('image-container').replaceChildren(img);
@@ -86,19 +95,21 @@ async function loadActivities() {
 }
 $('refresh').addEventListener('click', loadActivities);
 $('clear-filters').addEventListener('click', () => { selectedDates.clear(); renderDates(); renderRecords(); resetDetails(); });
-$('delete-button').addEventListener('click', async () => {
-  if (!selected || loading || !confirm('이 기록의 대화와 그림을 모두 삭제할까요? 삭제 후에는 복구할 수 없어요.')) return;
-  const target = selected; loading = true; $('delete-button').disabled = true; status('기록을 삭제하고 있어요.');
+async function deleteRecord(target) {
+  if (!target || loading || !confirm('이 기록의 대화와 그림을 모두 삭제할까요? 삭제 후에는 복구할 수 없어요.')) return;
+  loading = true; $('delete-button').disabled = true; status('기록을 삭제하고 있어요.');
   try {
-    if (target.data.drawingPath) {
-      try { await deleteObject(ref(services.storage, target.data.drawingPath)); }
+    if (target.data.drawingPath && !safeDrawingPath(target)) throw new Error('올바르지 않은 그림 경로');
+    if (safeDrawingPath(target)) {
+      try { await deleteObject(ref(services.storage, safeDrawingPath(target))); }
       catch (error) { if (error.code !== 'storage/object-not-found') throw error; }
     }
     await deleteDoc(target.ref);
-    activities = activities.filter(item => item.ref.path !== target.ref.path); resetDetails(); renderDates(); renderRecords(); status('기록을 삭제했어요.');
+    activities = activities.filter(item => item.ref.path !== target.ref.path); if (selected?.ref.path === target.ref.path) resetDetails(); renderDates(); renderRecords(); status('기록을 삭제했어요.');
   } catch (error) { status(`삭제를 완료하지 못했어요. 다시 시도해 주세요. 그림만 먼저 삭제되었을 수 있어요. (${error.code || '오류'})`); }
   finally { loading = false; $('delete-button').disabled = false; }
-});
+}
+$('delete-button').addEventListener('click', () => deleteRecord(selected));
 try {
   services = initializeFirebase();
   observeUser(services.auth, async user => {

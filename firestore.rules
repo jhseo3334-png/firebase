@@ -6,7 +6,7 @@ service cloud.firestore {
       allow list: if isAdmin();
     }
     match /students/{uid}/activities/{activityId} {
-      allow get: if (request.auth != null && request.auth.uid == uid) || isAdmin();
+      allow get, list: if (request.auth != null && request.auth.uid == uid) || isAdmin();
       allow delete: if isAdmin();
       allow create, update: if request.auth != null && request.auth.uid == uid
         && request.resource.data.uid == uid
